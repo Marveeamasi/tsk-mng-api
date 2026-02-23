@@ -1,0 +1,156 @@
+// This is your Prisma schema file
+// Docs: https://www.prisma.io/docs/concepts/components/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ProjectMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(USER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  refreshTokens  RefreshToken[]
+  createdTasks   Task[]          @relation("TaskCreator")
+  assignedTasks  Task[]          @relation("TaskAssignee")
+  projectMembers ProjectMember[]
+  ownedProjects  Project[]
+  comments       Comment[]
+
+  // Indexes
+  @@index([email])                   // Fast login lookup
+  @@index([createdAt])               // Sorting/pagination
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])                  // Fast token lookup by user
+  @@index([expiresAt])               // Efficient cleanup of expired tokens
+  @@map("refresh_tokens")
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner   User            @relation(fields: [ownerId], references: [id])
+  members ProjectMember[]
+  tasks   Task[]
+
+  @@index([ownerId])
+  @@index([createdAt])
+  @@map("projects")
+}
+
+model ProjectMember {
+  projectId String
+  userId    String
+  role      ProjectMemberRole @default(MEMBER)
+  joinedAt  DateTime          @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, userId])          // Composite PK prevents duplicate members
+  @@index([userId])                  // Fast "projects I'm in" lookup
+  @@map("project_members")
+}
+
+model Task {
+  id          String       @id @default(uuid())
+  title       String
+  description String?
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  tags        String[]
+  dueDate     DateTime?
+  completedAt DateTime?
+  creatorId   String
+  assigneeId  String?
+  projectId   String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  creator  User     @relation("TaskCreator", fields: [creatorId], references: [id])
+  assignee User?    @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  project  Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  comments Comment[]
+
+  // ── Indexes (critical for performance at scale) ────────────────────────
+  @@index([creatorId, status])       // "My tasks by status" (most common query)
+  @@index([assigneeId, status])      // "Assigned to me by status"
+  @@index([projectId, status])       // "Project tasks by status"
+  @@index([status, priority])        // Filtering + sorting dashboards
+  @@index([dueDate])                 // Upcoming/overdue queries
+  @@index([createdAt])               // Default sort
+  @@map("tasks")
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  body      String
+  taskId    String
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id])
+
+  @@index([taskId])                  // Fast comment loading per task
+  @@index([authorId])
+  @@map("comments")
+}
